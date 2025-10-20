@@ -3,7 +3,7 @@ import { Repository } from 'typeorm';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { Post } from './entities/post.entity';
-import { CONNECTION } from '../../public/tenancy/tenancy.symbols';
+import { CONNECTION } from '../../tenancy/tenancy.symbols';
 
 @Injectable()
 export class PostsService {

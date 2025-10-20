@@ -10,8 +10,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { databaseConfig, publicOrmConfig, tenantOrmConfig } from '../config';
 import { TenantsModule } from './public/tenants/tenants.module';
-import { TenancyModule } from './public/tenancy/tenancy.module';
-import { TenancyMiddleware } from './public/tenancy/tenancy.middleware';
+import { TenancyModule } from './tenancy/tenancy.module';
+import { TenancyMiddleware } from './tenancy/tenancy.middleware';
 import { PostsModule } from './tenanted/posts/posts.module';
 
 @Module({

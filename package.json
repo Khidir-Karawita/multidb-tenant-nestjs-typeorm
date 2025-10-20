@@ -24,7 +24,7 @@
     "migration:revert": "npm run typeorm -- migration:revert -d src/data-source.ts",
     "migration:generate:tenant": "npm run typeorm -- migration:generate -d src/tenant-data-source.ts",
     "migration:run:tenant": "ts-node src/migrate-tenants.ts",
-    "migration:revert:tenant": "npm run typeorm -- migration:revert -d src/tenant-data-source.ts"
+    "migration:revert:tenant": "ts-node src/revert-tenants.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

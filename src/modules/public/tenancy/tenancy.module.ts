@@ -21,8 +21,12 @@ const connectionFactory = {
     if (tenantId) {
       const tenantConfig = configService.get('tenantOrm');
       const maxPoolSize = configService.get('database.maxConnectionPoolSize');
-      const connection = await getTenantConnection(tenantId, tenantConfig, maxPoolSize);
-      const queryRunner = await connection.createQueryRunner();
+      const connection = await getTenantConnection(
+        tenantId,
+        tenantConfig,
+        maxPoolSize,
+      );
+      const queryRunner = connection.createQueryRunner();
       await queryRunner.connect();
       return queryRunner.manager;
     }

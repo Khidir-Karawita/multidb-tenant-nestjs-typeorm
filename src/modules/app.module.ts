@@ -1,13 +1,18 @@
-import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import {
+  Module,
+  MiddlewareConsumer,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { databaseConfig, publicOrmConfig, tenantOrmConfig } from './config';
-import { TenantsModule } from './modules/public/tenants.module';
-import { TenancyModule } from './modules/tenancy/tenancy.module';
-import { TenancyMiddleware } from './modules/tenancy/tenancy.middleware';
-import { PostsModule } from './modules/tenanted/posts/posts.module';
+import { databaseConfig, publicOrmConfig, tenantOrmConfig } from '../config';
+import { TenantsModule } from './public/tenants/tenants.module';
+import { TenancyModule } from './public/tenancy/tenancy.module';
+import { TenancyMiddleware } from './public/tenancy/tenancy.middleware';
+import { PostsModule } from './tenanted/posts/posts.module';
 
 @Module({
   imports: [
@@ -16,12 +21,7 @@ import { PostsModule } from './modules/tenanted/posts/posts.module';
       load: [databaseConfig, publicOrmConfig, tenantOrmConfig],
       envFilePath: '.env',
     }),
-    TypeOrmModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        ...configService.get('publicOrm'),
-      }),
-    }),
+    TypeOrmModule.forRootAsync(publicOrmConfig.asProvider()),
     TenancyModule,
     TenantsModule,
     PostsModule,
@@ -34,7 +34,10 @@ export class AppModule implements NestModule {
     // Apply tenancy middleware to all routes except tenant creation
     consumer
       .apply(TenancyMiddleware)
-      .exclude('tenants', 'tenants/(.*)')
+      .exclude(
+        { path: 'tenants', method: RequestMethod.ALL },
+        { path: 'tenants/*path', method: RequestMethod.ALL },
+      )
       .forRoutes('*');
   }
 }

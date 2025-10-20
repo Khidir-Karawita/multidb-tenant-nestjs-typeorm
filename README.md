@@ -19,6 +19,7 @@
 - [Migrations](#migrations)
 - [Configuration](#configuration)
 - [Available Scripts](#available-scripts)
+- [Common Patterns & Advanced Usage](#common-patterns--advanced-usage)
 - [Security & Best Practices](#security--best-practices)
 - [References](#references)
 
@@ -40,7 +41,7 @@
 ✅ **Better Performance**: No row-level filtering overhead  
 ✅ **Easier Scaling**: Can move schemas to different databases  
 ✅ **Simpler Queries**: No need for `WHERE tenantId = ?` everywhere  
-✅ **Per-Tenant Backups**: Easy to backup/restore individual tenants  
+✅ **Per-Tenant Backups**: Easy to backup/restore individual tenants
 
 ---
 
@@ -78,10 +79,11 @@ git clone <your-repo-url>
 cd multi-tenancy-typeorm-setup
 
 # Install dependencies
-yarn install
+yarn
 ```
 
 **Key Dependencies:**
+
 - `@nestjs/core` - NestJS framework ([Docs](https://docs.nestjs.com))
 - `@nestjs/typeorm` - TypeORM integration ([Docs](https://docs.nestjs.com/techniques/database))
 - `@nestjs/config` - Configuration management ([Docs](https://docs.nestjs.com/techniques/configuration))
@@ -107,6 +109,7 @@ MAX_CONNECTION_POOL_SIZE=10
 ```
 
 **Configuration Details:**
+
 - `DB_HOST`: PostgreSQL server address
 - `DB_PORT`: PostgreSQL port (default: 5432)
 - `DB_USERNAME`: Database user
@@ -117,9 +120,6 @@ MAX_CONNECTION_POOL_SIZE=10
 ### Step 3: Create PostgreSQL Database
 
 ```bash
-# Using createdb command
-createdb multi_tenancy_db
-
 # OR using psql
 psql -U postgres
 CREATE DATABASE multi_tenancy_db;
@@ -274,11 +274,15 @@ export default registerAs('database', () => ({
   username: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   name: process.env.DB_NAME || 'multi_tenancy_db',
-  maxConnectionPoolSize: parseInt(process.env.MAX_CONNECTION_POOL_SIZE || '10', 10),
+  maxConnectionPoolSize: parseInt(
+    process.env.MAX_CONNECTION_POOL_SIZE || '10',
+    10,
+  ),
 }));
 ```
 
 **Key Points:**
+
 - Uses `registerAs()` to namespace configuration
 - Provides default values for all settings
 - Type-safe access via `ConfigService`
@@ -328,6 +332,7 @@ export const tenantOrmConfig = registerAs(
 ```
 
 **Why Two Configs?**
+
 - **Public**: Manages tenant records in `public` schema
 - **Tenant**: Template for creating tenant-specific schemas
 
@@ -347,11 +352,11 @@ import { PostsModule } from './modules/tenanted/posts/posts.module';
   imports: [
     // 1. Global configuration
     ConfigModule.forRoot({
-      isGlobal: true,  // Available everywhere
+      isGlobal: true, // Available everywhere
       load: [databaseConfig, publicOrmConfig, tenantOrmConfig],
       envFilePath: '.env',
     }),
-    
+
     // 2. Public schema connection
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
@@ -359,31 +364,34 @@ import { PostsModule } from './modules/tenanted/posts/posts.module';
         ...configService.get('publicOrm'),
       }),
     }),
-    
+
     // 3. Multi-tenancy infrastructure
-    TenancyModule,      // Provides tenant connections
-    TenantsModule,      // Manages tenant CRUD
-    PostsModule,        // Example tenant-scoped resource
+    TenancyModule, // Provides tenant connections
+    TenantsModule, // Manages tenant CRUD
+    PostsModule, // Example tenant-scoped resource
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     // Apply tenancy middleware to all routes except tenant management
-    consumer
-      .apply(TenancyMiddleware)
-      .exclude('tenants', 'tenants/(.*)')  // Don't require tenant ID for tenant creation
-      .forRoutes('*');
+    consumer.apply(TenancyMiddleware);
+    exclude(
+      { path: 'tenants', method: RequestMethod.ALL },
+      { path: 'tenants/*path', method: RequestMethod.ALL },
+    ).forRoutes('*');
   }
 }
 ```
 
 **Breakdown:**
+
 1. **ConfigModule**: Loads all configurations globally
 2. **TypeOrmModule**: Connects to public schema for tenant metadata
 3. **TenancyModule**: Provides request-scoped tenant connections
 4. **Middleware**: Extracts tenant ID from headers (except for tenant routes)
 
 **Learn More:**
+
 - [NestJS Modules](https://docs.nestjs.com/modules)
 - [NestJS Middleware](https://docs.nestjs.com/middleware)
 - [TypeORM Module](https://docs.nestjs.com/techniques/database)
@@ -393,7 +401,7 @@ export class AppModule implements NestModule {
 Extracts and validates the tenant ID from request headers:
 
 ```typescript
-import { Injectable, NestMiddleware, BadRequestException } from '@nestjs/common';
+import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 
 @Injectable()
@@ -402,23 +410,42 @@ export class TenancyMiddleware implements NestMiddleware {
     const tenantId = req.headers['x-tenant-id'] as string;
 
     if (!tenantId) {
-      throw new BadRequestException('Tenant ID is missing in request headers');
+      return res.status(400).json({
+        statusCode: 400,
+        message: 'Tenant ID is missing in x-tenant-id header',
+      });
     }
 
     // Attach tenant ID to request object
-    (req as any).tenantId = tenantId;
+    req['tenantId'] = tenantId;
     next();
   }
 }
 ```
 
 **What It Does:**
+
 1. Reads `x-tenant-id` header from incoming request
 2. Validates that tenant ID exists
 3. Attaches tenant ID to request object for downstream use
-4. Throws error if tenant ID is missing
+4. Returns 400 error if tenant ID is missing
+
+**Error Response:**
+
+```json
+{
+  "statusCode": 400,
+  "message": "Tenant ID is missing in x-tenant-id header"
+}
+```
 
 **Applied To:** All routes except `/tenants/*` (see `app.module.ts`)
+
+**Why Not Throw Exception?**
+
+- Returns JSON response directly for better API consistency
+- Avoids exception filter overhead
+- Clearer error message for API consumers
 
 **Learn More:** [NestJS Middleware](https://docs.nestjs.com/middleware)
 
@@ -436,7 +463,7 @@ import { getTenantConnection } from './tenancy.utils';
 
 const connectionFactory = {
   provide: CONNECTION,
-  scope: Scope.REQUEST,  // 🔑 New instance per HTTP request
+  scope: Scope.REQUEST, // 🔑 New instance per HTTP request
   useFactory: async (request: Request, configService: ConfigService) => {
     const { tenantId } = request as any;
 
@@ -444,14 +471,18 @@ const connectionFactory = {
       // Get tenant-specific configuration
       const tenantConfig = configService.get('tenantOrm');
       const maxPoolSize = configService.get('database.maxConnectionPoolSize');
-      
+
       // Get or create connection for this tenant
-      const connection = await getTenantConnection(tenantId, tenantConfig, maxPoolSize);
-      
+      const connection = await getTenantConnection(
+        tenantId,
+        tenantConfig,
+        maxPoolSize,
+      );
+
       // Create query runner for this request
       const queryRunner = await connection.createQueryRunner();
       await queryRunner.connect();
-      
+
       return queryRunner.manager;
     }
 
@@ -460,7 +491,7 @@ const connectionFactory = {
   inject: [REQUEST, ConfigService],
 };
 
-@Global()  // 🌍 Available everywhere
+@Global() // 🌍 Available everywhere
 @Module({
   providers: [connectionFactory],
   exports: [CONNECTION],
@@ -483,15 +514,26 @@ export class TenancyModule {}
 
 **Learn More:** [Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers)
 
-### 5. Connection Caching (`src/modules/tenancy/tenancy.utils.ts`)
+### 5. LRU Connection Caching (`src/modules/tenancy/tenancy.utils.ts`)
 
-Caches database connections to avoid creating new ones for every request:
+Uses **LRU (Least Recently Used) cache** to manage tenant database connections with automatic disposal:
 
 ```typescript
 import { DataSource, DataSourceOptions } from 'typeorm';
+import { LRUCache } from 'lru-cache';
 
-// In-memory cache of tenant connections
-export const tenantConnections: { [schemaName: string]: DataSource } = {};
+export const MAX_TENANT_DATA_SOURCES = 90;
+
+// LRU Cache with automatic disposal
+const tenantConnectionCache = new LRUCache<string, DataSource>({
+  max: MAX_TENANT_DATA_SOURCES,
+  dispose: async (dataSource: DataSource, key: string) => {
+    console.log(`[TenancyUtils] Disposing tenant connection: ${key}`);
+    if (dataSource.isInitialized) {
+      await dataSource.destroy();
+    }
+  },
+});
 
 export async function getTenantConnection(
   tenantId: string,
@@ -500,34 +542,134 @@ export async function getTenantConnection(
 ): Promise<DataSource> {
   const connectionName = `tenant_${tenantId}`;
 
-  // Return cached connection if exists
-  if (tenantConnections[connectionName]) {
-    return tenantConnections[connectionName];
+  // Check cache first
+  const existingConnection = tenantConnectionCache.get(connectionName);
+  if (existingConnection) {
+    return existingConnection;
   }
 
-  // Create new connection for this tenant
+  // Create new connection
   const dataSource = new DataSource({
     ...tenantConfig,
     name: connectionName,
-    schema: connectionName,  // 🔑 Use tenant-specific schema
+    schema: connectionName, // 🔑 Tenant-specific schema
     poolSize: maxPoolSize,
   } as DataSourceOptions);
 
   await dataSource.initialize();
-  
-  // Cache for future requests
-  tenantConnections[connectionName] = dataSource;
-  
+
+  // Store in cache (LRU automatically evicts oldest if at capacity)
+  tenantConnectionCache.set(connectionName, dataSource);
+
   return dataSource;
 }
 ```
 
-**How It Works:**
-1. First request for tenant creates connection and caches it
-2. Subsequent requests reuse cached connection
-3. Each connection uses `schema: tenant_<uuid>` to isolate data
+**How LRU Cache Works:**
 
-**Performance:** Avoids connection overhead on every request
+1. **Cache Hit**: Returns existing connection immediately
+2. **Cache Miss**: Creates new connection and adds to cache
+3. **Cache Full**: Automatically evicts least recently used connection
+4. **Automatic Disposal**: Closed connections are properly destroyed
+
+**Connection Limit Calculation:**
+
+Based on [PostgreSQL connection limits](https://www.postgresql.org/docs/current/runtime-config-connection.html):
+
+- Default `max_connections`: 100
+- Reserved for superuser: 3
+- Reserved for public schema: 10
+- **Available for tenants: 87** (configured as 80 with margin)
+
+**Why LRU Cache?**
+
+✅ **Automatic Memory Management**: No manual cleanup needed  
+✅ **Connection Limits**: Prevents exceeding PostgreSQL max_connections  
+✅ **Graceful Eviction**: Properly closes connections when evicted  
+✅ **Performance**: O(1) lookups, efficient for high-traffic scenarios  
+✅ **Production-Ready**: Battle-tested library ([lru-cache](https://www.npmjs.com/package/lru-cache))
+
+**Monitoring:**
+
+```typescript
+// Get cache statistics
+export function getCacheStats() {
+  return {
+    size: tenantConnectionCache.size,
+    max: MAX_TENANT_DATA_SOURCES,
+    utilization: `${((size / max) * 100).toFixed(1)}%`,
+  };
+}
+```
+
+**Example Output:**
+
+```
+[TenancyUtils] Creating new connection for: tenant_abc-123
+[TenancyUtils] Connection cached. Cache size: 45/80
+[TenancyUtils] Disposing tenant connection: tenant_old-456
+[TenancyUtils] Successfully closed connection: tenant_old-456
+```
+
+**Learn More:** Based on [Luca Scalzotto's approach](https://www.scalzotto.nl/posts/nestjs-typeorm-schema-multitenancy/)
+
+### 5a. Dependency Injection Token (`src/modules/tenancy/tenancy.symbols.ts`)
+
+Simple constant used as the DI token for tenant connections:
+
+```typescript
+export const CONNECTION = 'TENANT_CONNECTION';
+```
+
+**Usage in Services:**
+
+```typescript
+@Injectable()
+export class MyService {
+  constructor(@Inject(CONNECTION) private readonly connection: any) {
+    // connection is tenant-specific based on request context
+  }
+}
+```
+
+**Why a Symbol/Constant?**
+
+- Provides a unique identifier for the tenant connection provider
+- Prevents naming conflicts with other providers
+- Makes it clear this is a special, request-scoped connection
+
+### 5b. PostgreSQL Schema Configuration
+
+When creating or migrating tenant schemas, the system sets up PostgreSQL properly:
+
+**Search Path Configuration:**
+
+```typescript
+await tenantDataSource.query(`SET search_path TO "${schemaName}", public`);
+```
+
+**What this does:**
+
+- Sets the default schema for queries to the tenant's schema
+- Falls back to `public` schema for shared resources (like extensions)
+- Ensures queries like `SELECT * FROM posts` automatically use `tenant_<uuid>.posts`
+
+**UUID Extension:**
+
+```typescript
+await tenantDataSource.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`);
+```
+
+**What this does:**
+
+- Enables UUID generation functions in PostgreSQL
+- Required for `uuid_generate_v4()` used in entity primary keys
+- Created once per schema, safe to run multiple times (`IF NOT EXISTS`)
+
+**Where it's used:**
+
+1. **Tenant Creation** (`tenants.service.ts`): When creating a new tenant schema
+2. **Migration Runner** (`migrate-tenants.ts`): Before running migrations on existing tenants
 
 ### 6. Tenant-Scoped Service (`src/modules/tenanted/posts/posts.service.ts`)
 
@@ -572,6 +714,7 @@ export class PostsService {
 ```
 
 **Key Points:**
+
 1. **No `scope: Scope.REQUEST` needed** - Inherits from `CONNECTION` provider
 2. **Injects `CONNECTION`** - Gets tenant-specific database connection
 3. **No manual tenant filtering** - All queries automatically scoped to tenant schema
@@ -616,6 +759,7 @@ private async runMigrations(schemaName: string) {
 ```
 
 **What Happens:**
+
 1. Tenant record saved to `public.tenants` table
 2. New schema created: `tenant_<uuid>`
 3. All migrations from `src/modules/tenanted/migrations/` run in new schema
@@ -668,6 +812,7 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -679,6 +824,7 @@ Content-Type: application/json
 ```
 
 This automatically:
+
 1. Creates a tenant record in the public schema
 2. Creates a new PostgreSQL schema `tenant_<uuid>`
 3. Runs all tenant migrations in the new schema
@@ -780,6 +926,7 @@ export class PostsService {
 ### API Endpoints
 
 **Create Post:**
+
 ```bash
 POST /posts
 Content-Type: application/json
@@ -793,12 +940,14 @@ x-tenant-id: <tenant-uuid>
 ```
 
 **Get All Posts (for tenant):**
+
 ```bash
 GET /posts
 x-tenant-id: <tenant-uuid>
 ```
 
 **Get Published Posts:**
+
 ```bash
 GET /posts/published
 x-tenant-id: <tenant-uuid>
@@ -854,7 +1003,12 @@ Create entity in `src/modules/tenanted/<resource>/entities/`:
 
 ```typescript
 // src/modules/tenanted/comments/entities/comment.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+} from 'typeorm';
 
 @Entity('comments')
 export class Comment {
@@ -949,7 +1103,7 @@ import { CommentsModule } from './modules/tenanted/comments/comments.module';
 @Module({
   imports: [
     // ... other imports
-    CommentsModule,  // Add here
+    CommentsModule, // Add here
   ],
 })
 export class AppModule {}
@@ -979,22 +1133,26 @@ This project uses **two separate migration systems** for public and tenant schem
 Public migrations manage tenant metadata (the `tenants` table in the `public` schema).
 
 **Generate Migration:**
+
 ```bash
 # After modifying entities in src/modules/public/entities/
 yarn migration:generate src/modules/public/migrations/MigrationName
 ```
 
 **Example:**
+
 ```bash
 yarn migration:generate src/modules/public/migrations/CreateTenantsTable
 ```
 
 **Run Migrations:**
+
 ```bash
 yarn migration:run
 ```
 
 **Revert Migration:**
+
 ```bash
 yarn migration:revert
 ```
@@ -1004,12 +1162,14 @@ yarn migration:revert
 Tenant migrations manage tenant-specific tables (like `posts`, `comments`, etc.) that exist in each `tenant_<uuid>` schema.
 
 **Generate Migration:**
+
 ```bash
 # After modifying entities in src/modules/tenanted/
 yarn migration:generate:tenant src/modules/tenanted/migrations/MigrationName
 ```
 
 **Example:**
+
 ```bash
 # After creating the Post entity
 yarn migration:generate:tenant src/modules/tenanted/migrations/CreatePostsTable
@@ -1055,6 +1215,7 @@ private async runMigrations(schemaName: string) {
 Let's add a `Comment` entity:
 
 **Step 1: Create Entity**
+
 ```typescript
 // src/modules/tenanted/comments/entities/comment.entity.ts
 import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
@@ -1073,16 +1234,19 @@ export class Comment {
 ```
 
 **Step 2: Generate Migration**
+
 ```bash
 yarn migration:generate:tenant src/modules/tenanted/migrations/CreateCommentsTable
 ```
 
 **Output:**
+
 ```
 Migration src/modules/tenanted/migrations/1234567890-CreateCommentsTable.ts has been generated successfully.
 ```
 
 **Step 3: Create New Tenant**
+
 ```bash
 curl -X POST http://localhost:3000/tenants \
   -H "Content-Type: application/json" \
@@ -1090,6 +1254,7 @@ curl -X POST http://localhost:3000/tenants \
 ```
 
 **What Happens:**
+
 1. Tenant record created in `public.tenants`
 2. Schema `tenant_<uuid>` created
 3. **All migrations run** (including `CreateCommentsTable`)
@@ -1104,6 +1269,7 @@ yarn migration:run:tenant
 ```
 
 **What it does:**
+
 1. Connects to the public schema and fetches all tenants
 2. Loops through each tenant schema (`tenant_<uuid>`)
 3. Runs pending migrations on each schema
@@ -1111,6 +1277,7 @@ yarn migration:run:tenant
 5. Provides a detailed summary
 
 **Example output:**
+
 ```
 ✅ Connected to public schema
 
@@ -1162,9 +1329,58 @@ If a migration fails on any tenant, all previously successful migrations are aut
 
 This ensures **all tenants stay in sync** - either all get the migration or none do.
 
+### Migration Runner Implementation (`src/migrate-tenants.ts`)
+
+The migration runner is a standalone script that handles the complex task of migrating all tenants safely:
+
+**Key Features:**
+
+1. **Fetches All Tenants:**
+
+   ```typescript
+   const tenants = await publicDataSource.query(
+     'SELECT id, name FROM tenants ORDER BY "createdAt"',
+   );
+   ```
+
+2. **Configures Each Tenant Schema:**
+
+   ```typescript
+   await tenantDataSource.query(`SET search_path TO "${schemaName}", public`);
+   await tenantDataSource.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`);
+   ```
+
+3. **Runs Migrations:**
+
+   ```typescript
+   const executedMigrations = await tenantDataSource.runMigrations();
+   ```
+
+4. **Automatic Rollback on Failure:**
+   ```typescript
+   if (error) {
+     await rollbackSuccessfulMigrations(results.filter((r) => r.success));
+     throw new Error('Migration failed. All migrations rolled back.');
+   }
+   ```
+
+**Why This Approach?**
+
+- **Atomic**: All tenants get the migration or none do
+- **Safe**: Automatic rollback prevents partial state
+- **Informative**: Detailed progress and error messages
+- **Production-Ready**: Proper error handling and cleanup
+
+**When to Run:**
+
+- After generating a new tenant migration
+- Before deploying to production (in CI/CD pipeline)
+- When onboarding existing tenants to new features
+
 ### Migration Commands Reference
 
 **Public Schema:**
+
 ```bash
 yarn migration:generate src/modules/public/migrations/Name  # Generate
 yarn migration:run                                          # Run
@@ -1172,6 +1388,7 @@ yarn migration:revert                                       # Revert
 ```
 
 **Tenant Schema:**
+
 ```bash
 yarn migration:generate:tenant src/modules/tenanted/migrations/Name  # Generate
 yarn migration:run:tenant                                            # Run on ALL existing tenants
@@ -1183,6 +1400,7 @@ yarn migration:revert:tenant                                         # Revert (u
 ### Best Practices
 
 ✅ **DO:**
+
 - Generate migrations for all entity changes
 - Review generated migrations before committing
 - Test with a new tenant first
@@ -1190,12 +1408,46 @@ yarn migration:revert:tenant                                         # Revert (u
 - Version control all migration files
 
 ❌ **DON'T:**
+
 - Edit generated migrations unless necessary
 - Delete old migration files
-- Run tenant migrations manually (they auto-run)
 - Use `synchronize: true` in production
+- Skip testing migrations on a test tenant first
 
-**Learn More:** See [MIGRATIONS_GUIDE.md](MIGRATIONS_GUIDE.md) for detailed documentation.
+### Troubleshooting Migrations
+
+**"No changes in database schema were found"**
+
+- You haven't made any entity changes yet
+- Modify an entity in `src/modules/tenanted/` first
+- Ensure entity is properly decorated with TypeORM decorators
+
+**"Migration failed: relation already exists"**
+
+- Table already exists in the schema
+- Check if migration was already run
+- Use `IF NOT EXISTS` in custom migrations
+- Verify migration tracking table
+
+**"Cannot find module 'uuid-ossp'"**
+
+- UUID extension not installed in schema
+- Run: `CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`
+- This is automatically handled by the migration runner
+
+**"Connection timeout" or "Too many connections"**
+
+- Increase `MAX_CONNECTION_POOL_SIZE` in `.env`
+- Check for connection leaks
+- Ensure connections are properly closed
+- Monitor active connections: `SELECT count(*) FROM pg_stat_activity;`
+
+**"Tenant schema not found"**
+
+- Tenant may not exist in database
+- Verify tenant ID is correct
+- Check `public.tenants` table
+- Ensure schema was created: `\dn` in psql
 
 ---
 
@@ -1263,6 +1515,187 @@ yarn format             # Format code
 
 ---
 
+## Common Patterns & Advanced Usage
+
+### Pattern 1: Relationships Between Tenant Entities
+
+Entities within the same tenant schema can have relationships:
+
+```typescript
+// src/modules/tenanted/comments/entities/comment.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
+import { Post } from '../../posts/entities/post.entity';
+
+@Entity('comments')
+export class Comment {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column('text')
+  content: string;
+
+  // Relationship within same tenant schema
+  @ManyToOne(() => Post, (post) => post.comments)
+  post: Post;
+}
+```
+
+**Querying with Relations:**
+
+```typescript
+async findPostWithComments(postId: string): Promise<Post> {
+  return this.postRepository.findOne({
+    where: { id: postId },
+    relations: ['comments'],  // Automatically scoped to tenant schema
+  });
+}
+```
+
+### Pattern 2: Tenant-Aware Transactions
+
+Use transactions for complex operations:
+
+```typescript
+@Injectable()
+export class OrdersService {
+  constructor(@Inject(CONNECTION) private readonly connection: any) {}
+
+  async createOrderWithItems(orderDto: CreateOrderDto): Promise<Order> {
+    const queryRunner = this.connection.createQueryRunner();
+
+    await queryRunner.startTransaction();
+    try {
+      // Create order
+      const order = await queryRunner.manager.save(Order, orderDto);
+
+      // Create order items
+      const items = orderDto.items.map((item) => ({
+        ...item,
+        orderId: order.id,
+      }));
+      await queryRunner.manager.save(OrderItem, items);
+
+      await queryRunner.commitTransaction();
+      return order;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+}
+```
+
+### Pattern 3: Cross-Tenant Queries (Admin Only)
+
+Sometimes admins need to query across all tenants:
+
+```typescript
+@Injectable()
+export class AdminService {
+  constructor(
+    @InjectDataSource() private publicDataSource: DataSource,
+    private configService: ConfigService,
+  ) {}
+
+  async getAllTenantsPostCount(): Promise<any[]> {
+    // Get all tenants
+    const tenants = await this.publicDataSource.query(
+      'SELECT id, name FROM tenants',
+    );
+
+    const results = [];
+
+    for (const tenant of tenants) {
+      const schemaName = `tenant_${tenant.id}`;
+
+      // Query each tenant schema
+      const count = await this.publicDataSource.query(
+        `SELECT COUNT(*) as count FROM "${schemaName}".posts`,
+      );
+
+      results.push({
+        tenantName: tenant.name,
+        postCount: parseInt(count[0].count),
+      });
+    }
+
+    return results;
+  }
+}
+```
+
+**⚠️ Security Warning:** Only expose cross-tenant queries to admin users!
+
+### Pattern 4: Tenant-Specific Configuration
+
+Store tenant-specific settings:
+
+```typescript
+// src/modules/tenanted/settings/entities/tenant-setting.entity.ts
+@Entity('tenant_settings')
+export class TenantSetting {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  key: string;
+
+  @Column('jsonb')
+  value: any;
+}
+```
+
+**Usage:**
+
+```typescript
+async getSetting(key: string): Promise<any> {
+  const setting = await this.settingRepository.findOne({ where: { key } });
+  return setting?.value;
+}
+
+async updateSetting(key: string, value: any): Promise<void> {
+  await this.settingRepository.upsert({ key, value }, ['key']);
+}
+```
+
+### Pattern 5: Soft Deletes
+
+Implement soft deletes for tenant data:
+
+```typescript
+@Entity('posts')
+export class Post {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  title: string;
+
+  @DeleteDateColumn()
+  deletedAt: Date; // Automatically managed by TypeORM
+}
+```
+
+**Service methods:**
+
+```typescript
+async softDelete(id: string): Promise<void> {
+  await this.postRepository.softDelete(id);
+}
+
+async restore(id: string): Promise<void> {
+  await this.postRepository.restore(id);
+}
+
+async findAllIncludingDeleted(): Promise<Post[]> {
+  return this.postRepository.find({ withDeleted: true });
+}
+```
+
+---
+
 ## Security & Best Practices
 
 ### Data Isolation
@@ -1270,19 +1703,19 @@ yarn format             # Format code
 ✅ **Physical Separation**: Each tenant has their own PostgreSQL schema  
 ✅ **No Cross-Tenant Queries**: Impossible to accidentally query wrong tenant  
 ✅ **No Row-Level Filtering**: No need for `WHERE tenantId = ?` in every query  
-✅ **Schema-Level Permissions**: Can set PostgreSQL permissions per schema  
+✅ **Schema-Level Permissions**: Can set PostgreSQL permissions per schema
 
 ### Performance
 
 ✅ **Connection Pooling**: Connections cached and reused per tenant  
 ✅ **No Query Overhead**: No row-level filtering on every query  
-✅ **Indexed Naturally**: Each schema has its own indexes  
+✅ **Indexed Naturally**: Each schema has its own indexes
 
 ### Scalability
 
 ✅ **Easy to Shard**: Move tenant schemas to different databases  
 ✅ **Per-Tenant Backups**: Backup/restore individual tenants easily  
-✅ **Independent Scaling**: Scale resources per tenant if needed  
+✅ **Independent Scaling**: Scale resources per tenant if needed
 
 ### Best Practices
 
@@ -1306,6 +1739,7 @@ This implementation is based on the patterns described in this excellent article
 ### Documentation
 
 **NestJS:**
+
 - [Official Documentation](https://docs.nestjs.com)
 - [Modules](https://docs.nestjs.com/modules)
 - [Middleware](https://docs.nestjs.com/middleware)
@@ -1314,6 +1748,7 @@ This implementation is based on the patterns described in this excellent article
 - [Configuration](https://docs.nestjs.com/techniques/configuration)
 
 **TypeORM:**
+
 - [Official Documentation](https://typeorm.io)
 - [Data Source](https://typeorm.io/data-source)
 - [Repository API](https://typeorm.io/repository-api)
@@ -1321,13 +1756,14 @@ This implementation is based on the patterns described in this excellent article
 - [Entities](https://typeorm.io/entities)
 
 **PostgreSQL:**
+
 - [Schema Documentation](https://www.postgresql.org/docs/current/ddl-schemas.html)
 - [Connection Pooling](https://www.postgresql.org/docs/current/runtime-config-connection.html)
 
 ### Related Topics
 
 - [Multi-Tenancy Patterns](https://docs.microsoft.com/en-us/azure/architecture/patterns/multi-tenancy)
-- [Database Sharding](https://en.wikipedia.org/wiki/Shard_(database_architecture))
+- [Database Sharding](<https://en.wikipedia.org/wiki/Shard_(database_architecture)>)
 - [Request Scoping in NestJS](https://docs.nestjs.com/fundamentals/injection-scopes#request-provider)
 
 ---

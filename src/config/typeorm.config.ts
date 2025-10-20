@@ -10,7 +10,10 @@ export const publicOrmConfig = registerAs(
     username: process.env.DB_USERNAME || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
     database: process.env.DB_NAME || 'multi_tenancy_db',
-    entities: [__dirname + '/../modules/public/entities/*.entity{.ts,.js}'],
+    entities: [
+      __dirname + '/../modules/public/entities/*.entity{.ts,.js}',
+      __dirname + '/../modules/public/**/entities/*.entity{.ts,.js}',
+    ],
     migrations: [__dirname + '/../modules/public/migrations/*{.ts,.js}'],
     synchronize: false,
   }),

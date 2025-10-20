@@ -176,41 +176,46 @@ src/
 │   ├── typeorm.config.ts        # TypeORM configs (public & tenant)
 │   └── index.ts                 # Config exports
 ├── modules/
+│   ├── app.controller.ts        # Root controller
+│   ├── app.service.ts           # Root service
+│   ├── app.module.ts            # Root module
 │   ├── public/                  # Public schema (tenant metadata)
-│   │   ├── entities/
-│   │   │   └── tenant.entity.ts # Tenant entity
-│   │   ├── migrations/          # Public schema migrations
-│   │   ├── dto/
-│   │   │   └── create-tenant.dto.ts
-│   │   ├── tenants.controller.ts
-│   │   ├── tenants.service.ts
-│   │   └── tenants.module.ts
-│   ├── tenanted/                # Tenant-specific resources
-│   │   ├── entities/            # Shared tenant entities
-│   │   ├── migrations/          # Tenant schema migrations
-│   │   └── posts/               # Example: Posts CRUD
-│   │       ├── entities/
-│   │       │   └── post.entity.ts
-│   │       ├── dto/
-│   │       ├── posts.controller.ts
-│   │       ├── posts.service.ts
-│   │       └── posts.module.ts
-│   └── tenancy/                 # Multi-tenancy infrastructure
-│       ├── tenancy.middleware.ts  # Extract tenant ID from header
-│       ├── tenancy.module.ts      # Provide tenant connection
-│       ├── tenancy.symbols.ts     # DI tokens
-│       └── tenancy.utils.ts       # Connection caching
+│   │   ├── tenants/             # Tenant management
+│   │   │   ├── entities/
+│   │   │   │   └── tenant.entity.ts
+│   │   │   ├── dto/
+│   │   │   │   └── create-tenant.dto.ts
+│   │   │   ├── tenants.controller.ts
+│   │   │   ├── tenants.service.ts
+│   │   │   └── tenants.module.ts
+│   │   ├── tenancy/             # Multi-tenancy infrastructure
+│   │   │   ├── tenancy.middleware.ts  # Extract tenant ID from header
+│   │   │   ├── tenancy.module.ts      # Provide tenant connection
+│   │   │   ├── tenancy.symbols.ts     # DI tokens
+│   │   │   └── tenancy.utils.ts       # Connection caching (LRU)
+│   │   └── migrations/          # Public schema migrations
+│   └── tenanted/                # Tenant-specific resources
+│       ├── posts/               # Example: Posts CRUD
+│       │   ├── entities/
+│       │   │   └── post.entity.ts
+│       │   ├── dto/
+│       │   ├── posts.controller.ts
+│       │   ├── posts.service.ts
+│       │   └── posts.module.ts
+│       └── migrations/          # Tenant schema migrations
 ├── data-source.ts               # DataSource for migrations
-├── app.module.ts                # Root module
+├── migrate-tenants.ts           # Migration runner for all tenants
 └── main.ts                      # Application entry point
 ```
 
 ### Key Directories:
 
 - **`config/`**: Centralized configuration using `@nestjs/config`
-- **`modules/public/`**: Manages tenant records in public schema
-- **`modules/tenanted/`**: Tenant-scoped resources (posts, users, etc.)
-- **`modules/tenancy/`**: Core multi-tenancy infrastructure
+- **`modules/app.*`**: Root application files (controller, service, module)
+- **`modules/public/tenants/`**: Manages tenant records in public schema
+- **`modules/public/tenancy/`**: Core multi-tenancy infrastructure (middleware, module, utils)
+- **`modules/tenanted/`**: Tenant-scoped resources (posts, comments, etc.)
+- **`migrate-tenants.ts`**: Standalone script to run migrations on all tenant schemas
 
 ---
 
@@ -396,7 +401,7 @@ export class AppModule implements NestModule {
 - [NestJS Middleware](https://docs.nestjs.com/middleware)
 - [TypeORM Module](https://docs.nestjs.com/techniques/database)
 
-### 3. Tenancy Middleware (`src/modules/tenancy/tenancy.middleware.ts`)
+### 3. Tenancy Middleware (`src/modules/public/tenancy/tenancy.middleware.ts`)
 
 Extracts and validates the tenant ID from request headers:
 
@@ -449,7 +454,7 @@ export class TenancyMiddleware implements NestMiddleware {
 
 **Learn More:** [NestJS Middleware](https://docs.nestjs.com/middleware)
 
-### 4. Tenancy Module (`src/modules/tenancy/tenancy.module.ts`)
+### 4. Tenancy Module (`src/modules/public/tenancy/tenancy.module.ts`)
 
 The **heart** of the multi-tenancy system. Provides request-scoped database connections:
 
@@ -514,7 +519,7 @@ export class TenancyModule {}
 
 **Learn More:** [Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers)
 
-### 5. LRU Connection Caching (`src/modules/tenancy/tenancy.utils.ts`)
+### 5. LRU Connection Caching (`src/modules/public/tenancy/tenancy.utils.ts`)
 
 Uses **LRU (Least Recently Used) cache** to manage tenant database connections with automatic disposal:
 
@@ -613,7 +618,7 @@ export function getCacheStats() {
 
 **Learn More:** Based on [Luca Scalzotto's approach](https://www.scalzotto.nl/posts/nestjs-typeorm-schema-multitenancy/)
 
-### 5a. Dependency Injection Token (`src/modules/tenancy/tenancy.symbols.ts`)
+### 5a. Dependency Injection Token (`src/modules/public/tenancy/tenancy.symbols.ts`)
 
 Simple constant used as the DI token for tenant connections:
 
@@ -679,7 +684,7 @@ Example of a service that uses tenant-scoped data:
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
-import { CONNECTION } from '../../tenancy/tenancy.symbols';
+import { CONNECTION } from '../../public/tenancy/tenancy.symbols';
 import { CreatePostDto } from './dto/create-post.dto';
 
 @Injectable()
@@ -894,7 +899,7 @@ export class Post {
 ```typescript
 import { Injectable, Inject } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { CONNECTION } from '../../tenancy/tenancy.symbols';
+import { CONNECTION } from '../../public/tenancy/tenancy.symbols';
 import { Post } from './entities/post.entity';
 
 @Injectable()
@@ -1034,7 +1039,7 @@ Inject `CONNECTION` token for tenant-scoped repository:
 // src/modules/tenanted/comments/comments.service.ts
 import { Injectable, Inject } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { CONNECTION } from '../../tenancy/tenancy.symbols';
+import { CONNECTION } from '../../public/tenancy/tenancy.symbols';
 import { Comment } from './entities/comment.entity';
 
 @Injectable()
